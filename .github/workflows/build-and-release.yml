@@ -117,12 +117,16 @@ jobs:
           python-version: '3.11'
 
       - name: Clone Hermes Source at Tag
+        id: clone
         if: steps.resolver.outputs.should_build == 'true'
         env:
           TAG: ${{ steps.resolver.outputs.tag }}
         run: |
           echo "Cloning NousResearch/hermes-agent at tag ${TAG}..."
           git clone --depth 1 --branch "${TAG}" https://github.com/NousResearch/hermes-agent.git upstream-source
+          UPSTREAM_COMMIT=$(git -C upstream-source rev-parse HEAD)
+          echo "Upstream commit: ${UPSTREAM_COMMIT}"
+          echo "upstream_commit=${UPSTREAM_COMMIT}" >> "$GITHUB_OUTPUT"
 
       - name: Configure & Patch Linux Targets
         if: steps.resolver.outputs.should_build == 'true'
@@ -181,6 +185,8 @@ jobs:
       - name: Build Hermes Desktop
         if: steps.resolver.outputs.should_build == 'true'
         env:
+          GITHUB_SHA: ${{ steps.clone.outputs.upstream_commit }}
+          GITHUB_REF_NAME: ${{ steps.resolver.outputs.tag }}
           TAG: ${{ steps.resolver.outputs.tag }}
           HERMES_PAYLOAD_TAG: ${{ steps.resolver.outputs.tag }}
           NODE_OPTIONS: "--max-old-space-size=8192"
