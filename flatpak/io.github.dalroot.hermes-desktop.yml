@@ -1,0 +1,27 @@
+app-id: io.github.dalroot.hermes-desktop
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+base: org.electronjs.Electron2.BaseApp
+base-version: '24.08'
+command: hermes-desktop
+finish-args:
+  - --share=ipc
+  - --socket=x11
+  - --socket=wayland
+  - --share=network
+  - --socket=pulseaudio
+  - --filesystem=host
+  - --talk-name=org.freedesktop.Notifications
+modules:
+  - name: hermes-desktop
+    buildsystem: simple
+    build-commands:
+      - install -D apply_extra /app/bin/apply_extra
+      - install -D hermes-desktop.sh /app/bin/hermes-desktop
+    sources:
+      - type: extra-data
+        url: https://github.com/dalroot/hermes-desktop-linux/releases/download/v0.22.5/Hermes-0.22.5-linux-amd64.deb
+        sha256: PENDING_SHA256
+        size: 0
+        filename: hermes.deb

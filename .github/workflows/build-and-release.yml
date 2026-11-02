@@ -1,0 +1,226 @@
+name: Sync and Build Hermes Desktop for Linux
+
+on:
+  schedule:
+    # Runs every 6 hours to check for new upstream releases
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Specific upstream tag to build (e.g. v0.22.5). Leave empty for latest upstream release.'
+        required: false
+        type: string
+        default: ''
+      force:
+        description: 'Force rebuild even if this tag has already been released'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  check-and-build:
+    name: Check Upstream & Build Linux Packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout Packaging Repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Install System Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            rpm \
+            binutils \
+            fakeroot \
+            desktop-file-utils \
+            libarchive-tools \
+            libarchive-dev \
+            libfuse2 \
+            curl \
+            jq
+
+      - name: Resolve Upstream Tag & Check Release Existence
+        id: resolver
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+
+          UPSTREAM_REPO="NousResearch/hermes-agent"
+          LOCAL_REPO="${{ github.repository }}"
+
+          if [ -n "$INPUT_TAG" ]; then
+            TARGET_TAG="$INPUT_TAG"
+            echo "Using manual input tag: $TARGET_TAG"
+            # Fetch release info for input tag
+            RELEASE_JSON=$(gh api "repos/${UPSTREAM_REPO}/releases/tags/${TARGET_TAG}" || true)
+          else
+            echo "Fetching latest release from ${UPSTREAM_REPO}..."
+            RELEASE_JSON=$(gh api "repos/${UPSTREAM_REPO}/releases/latest")
+            TARGET_TAG=$(echo "$RELEASE_JSON" | jq -r .tag_name)
+          fi
+
+          if [ -z "$TARGET_TAG" ] || [ "$TARGET_TAG" = "null" ]; then
+            echo "::error::Could not resolve target release tag from ${UPSTREAM_REPO}"
+            exit 1
+          fi
+
+          RELEASE_TITLE=$(echo "$RELEASE_JSON" | jq -r '.name // ""')
+          [ -z "$RELEASE_TITLE" ] && RELEASE_TITLE="Hermes Agent ${TARGET_TAG}"
+          
+          # Save raw upstream body
+          echo "$RELEASE_JSON" | jq -r '.body // ""' > /tmp/upstream_notes.md
+
+          echo "Target tag: $TARGET_TAG"
+          echo "Target title: $RELEASE_TITLE"
+
+          # Check if tag already exists in dalroot/hermes-desktop-linux
+          EXISTS="false"
+          if gh release view "$TARGET_TAG" --repo "$LOCAL_REPO" >/dev/null 2>&1; then
+            EXISTS="true"
+          fi
+
+          if [ "$EXISTS" = "true" ] && [ "$INPUT_FORCE" != "true" ]; then
+            echo "Tag ${TARGET_TAG} already exists in ${LOCAL_REPO}. Skipping build."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Release required for tag: ${TARGET_TAG}"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "tag=${TARGET_TAG}" >> "$GITHUB_OUTPUT"
+            echo "title=${RELEASE_TITLE}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node.js 22.x
+        if: steps.resolver.outputs.should_build == 'true'
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a  # v4.2.0
+        with:
+          node-version: 22
+
+      - name: Setup Python 3.11
+        if: steps.resolver.outputs.should_build == 'true'
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38  # v5.4.0
+        with:
+          python-version: '3.11'
+
+      - name: Clone Hermes Source at Tag
+        if: steps.resolver.outputs.should_build == 'true'
+        env:
+          TAG: ${{ steps.resolver.outputs.tag }}
+        run: |
+          echo "Cloning NousResearch/hermes-agent at tag ${TAG}..."
+          git clone --depth 1 --branch "${TAG}" https://github.com/NousResearch/hermes-agent.git upstream-source
+
+      - name: Configure & Patch Linux Targets
+        if: steps.resolver.outputs.should_build == 'true'
+        run: |
+          cd upstream-source/apps/desktop
+          # Ensure AppImage, deb, rpm are all included in target configuration
+          node -e "
+            const fs = require('fs');
+            const file = 'electron-builder.config.cjs';
+            let content = fs.readFileSync(file, 'utf8');
+            content = content.replace(/target:\s*\[['\"]AppImage['\"]\]/g, \"target: ['AppImage', 'deb', 'rpm']\");
+            fs.writeFileSync(file, content, 'utf8');
+          "
+          echo "Patched electron-builder.config.cjs for AppImage, deb, rpm targets."
+
+      - name: Install Dependencies
+        if: steps.resolver.outputs.should_build == 'true'
+        run: |
+          cd upstream-source
+          npm install --workspaces=false
+          npm install --workspace apps/desktop
+
+      - name: Build Hermes Desktop
+        if: steps.resolver.outputs.should_build == 'true'
+        env:
+          TAG: ${{ steps.resolver.outputs.tag }}
+          HERMES_PAYLOAD_TAG: ${{ steps.resolver.outputs.tag }}
+        run: |
+          cd upstream-source/apps/desktop
+          echo "Running build..."
+          npm run build
+          echo "Running electron-builder for Linux..."
+          npx electron-builder --linux AppImage deb rpm
+
+      - name: Collect & Verify Artifacts
+        if: steps.resolver.outputs.should_build == 'true'
+        id: artifacts
+        run: |
+          mkdir -p dist-assets
+          find upstream-source/apps/desktop/release -maxdepth 1 -type f \( -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm" -o -name "*.tar.gz" \) -exec cp {} dist-assets/ \;
+          
+          cd dist-assets
+          ls -la
+          
+          # Generate Checksums
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          
+          echo "artifact_count=$(ls -1 | wc -l)" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare Release Notes
+        if: steps.resolver.outputs.should_build == 'true'
+        env:
+          TAG: ${{ steps.resolver.outputs.tag }}
+        run: |
+          cat << 'EOF' > /tmp/release_header.md
+          # 🐧 Hermes Agent Desktop for Linux (${{ steps.resolver.outputs.tag }})
+
+          Native pre-built Linux binaries (.AppImage, .deb, .rpm) for Hermes Agent Desktop.
+
+          ### 📦 Linux Packages
+          - **AppImage:** Universal portable executable for all distributions (Arch, Fedora, Ubuntu, Debian, Manjaro, openSUSE).
+          - **.deb:** Native installer for Ubuntu, Debian, Linux Mint, Pop!_OS.
+          - **.rpm:** Native installer for Fedora, RHEL, openSUSE.
+          - **AUR (Arch Linux):** `yay -S hermes-desktop-bin` *(Coming soon / updating)*
+
+          ---
+
+          ### 🚀 Quick Start (Linux)
+
+          #### AppImage (Universal)
+          ```bash
+          chmod +x Hermes-*-linux-x86_64.AppImage
+          ./Hermes-*-linux-x86_64.AppImage
+          ```
+
+          #### Ubuntu / Debian (.deb)
+          ```bash
+          sudo dpkg -i Hermes-*-linux-amd64.deb || sudo apt-get install -f
+          ```
+
+          #### Fedora / RHEL (.rpm)
+          ```bash
+          sudo dnf install ./Hermes-*-linux-x86_64.rpm
+          ```
+
+          ---
+
+          ## 📜 Original Upstream Release Notes (Nous Research)
+
+          EOF
+
+          cat /tmp/release_header.md /tmp/upstream_notes.md > /tmp/final_release_notes.md
+
+      - name: Create GitHub Release
+        if: steps.resolver.outputs.should_build == 'true'
+        uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef299c7d8760  # v2.2.1
+        with:
+          tag_name: ${{ steps.resolver.outputs.tag }}
+          name: ${{ steps.resolver.outputs.title }} (Linux Desktop)
+          body_path: /tmp/final_release_notes.md
+          draft: false
+          prerelease: false
+          files: |
+            dist-assets/*.AppImage
+            dist-assets/*.deb
+            dist-assets/*.rpm
+            dist-assets/SHA256SUMS.txt

@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+dist/
+release/
+build/
+*.log
+
+# Secret & Anti-leak protocol
+HANDOFF.md
+FINANCIAL_REPORT.md
+*.secret.*
+.env
+.env.*
+!.env.example
+
+# OS & Temp
+.DS_Store
+Thumbs.db
+*.tmp

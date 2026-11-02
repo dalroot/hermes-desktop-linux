@@ -1,0 +1,23 @@
+# Maintainer: Dal <https://github.com/dalroot>
+pkgname=hermes-desktop-bin
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc="Native desktop shell for Hermes Agent by Nous Research (pre-built binary)"
+arch=('x86_64')
+url="https://github.com/dalroot/hermes-desktop-linux"
+license=('MIT')
+depends=('gtk3' 'nss' 'alsa-lib' 'libxss' 'libxtst')
+optdepends=(
+    'python>=3.10: For local Hermes agent execution'
+)
+provides=('hermes-desktop')
+conflicts=('hermes-desktop')
+
+_deb_name="Hermes-${pkgver}-linux-amd64.deb"
+source_x86_64=("${url}/releases/download/v${pkgver}/${_deb_name}")
+sha256sums_x86_64=('@SHA256@')
+
+package() {
+    tar -xf data.tar.xz -C "${pkgdir}/"
+    chmod 755 "${pkgdir}/usr/bin/"* || true
+}
