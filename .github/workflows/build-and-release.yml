@@ -30,8 +30,15 @@ jobs:
       - name: Checkout Packaging Repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - name: Install System Build Dependencies
+      - name: Install System Build Dependencies & Setup Swap
         run: |
+          # Allocate 6GB swap to prevent V8 OOM during electron packaging
+          sudo fallocate -l 6G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=6144
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             rpm \
@@ -143,12 +150,13 @@ jobs:
         env:
           TAG: ${{ steps.resolver.outputs.tag }}
           HERMES_PAYLOAD_TAG: ${{ steps.resolver.outputs.tag }}
+          NODE_OPTIONS: "--max-old-space-size=8192"
         run: |
           cd upstream-source/apps/desktop
           echo "Running build..."
           npm run build
-          echo "Running electron-builder for Linux..."
-          npx electron-builder --linux AppImage deb rpm
+          echo "Running builder for Linux..."
+          npm run builder -- --linux AppImage deb rpm
 
       - name: Collect & Verify Artifacts
         if: steps.resolver.outputs.should_build == 'true'
