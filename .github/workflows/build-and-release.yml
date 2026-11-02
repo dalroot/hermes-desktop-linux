@@ -32,11 +32,11 @@ jobs:
 
       - name: Install System Build Dependencies & Setup Swap
         run: |
-          # Allocate 6GB swap to prevent V8 OOM during electron packaging
-          sudo fallocate -l 6G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=6144
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          # Allocate 8GB extra swap using non-colliding path
+          sudo fallocate -l 8G /extra_swapfile || sudo dd if=/dev/zero of=/extra_swapfile bs=1M count=8192
+          sudo chmod 600 /extra_swapfile
+          sudo mkswap /extra_swapfile
+          sudo swapon /extra_swapfile
           free -h
 
           sudo apt-get update
