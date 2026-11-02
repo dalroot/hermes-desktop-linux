@@ -112,7 +112,7 @@ jobs:
 
       - name: Update npm to latest
         if: steps.resolver.outputs.should_build == 'true'
-        run: sudo npm install -g npm@latest
+        run: npm install -g npm@latest
 
       - name: Setup Python 3.11
         if: steps.resolver.outputs.should_build == 'true'
@@ -194,7 +194,9 @@ jobs:
         if: steps.resolver.outputs.should_build == 'true'
         run: |
           cd upstream-source
-          npm config set engine-strict false
+          if [ -f .npmrc ]; then
+            sed -i 's/engine-strict=true/engine-strict=false/g' .npmrc
+          fi
           npm install --workspaces=false
           npm install --workspace apps/desktop
 
