@@ -128,7 +128,8 @@ jobs:
         if: steps.resolver.outputs.should_build == 'true'
         run: |
           cd upstream-source/apps/desktop
-          # Ensure AppImage, deb, rpm are all included in target configuration
+
+          # 1. Patch electron-builder.config.cjs for Linux targets
           node -e "
             const fs = require('fs');
             const file = 'electron-builder.config.cjs';
@@ -136,7 +137,39 @@ jobs:
             content = content.replace(/target:\s*\[['\"]AppImage['\"]\]/g, \"target: ['AppImage', 'deb', 'rpm']\");
             fs.writeFileSync(file, content, 'utf8');
           "
-          echo "Patched electron-builder.config.cjs for AppImage, deb, rpm targets."
+
+          # 2. Patch prepare-packaging-tools.mjs to ensure copied tools are CommonJS
+          node -e "
+            const fs = require('fs');
+            const path = require('path');
+            const file = 'scripts/prepare-packaging-tools.mjs';
+            let content = fs.readFileSync(file, 'utf8');
+            content = content.replace(
+              'fs.cpSync(from, to, { recursive: true, verbatimSymlinks: true })',
+              'fs.cpSync(from, to, { recursive: true, verbatimSymlinks: true }); try { fs.writeFileSync(path.join(to, \"package.json\"), JSON.stringify({ type: \"commonjs\" })); } catch(e){}'
+            );
+            fs.writeFileSync(file, content, 'utf8');
+          "
+
+          # 3. Create build folders and mark as CommonJS to prevent ESM ReferenceError: require
+          mkdir -p build/prepared-packaging-tools/icons
+          echo '{"type": "commonjs"}' > build/package.json
+          echo '{"type": "commonjs"}' > build/prepared-packaging-tools/package.json
+          echo '{"type": "commonjs"}' > build/prepared-packaging-tools/icons/package.json
+
+          # 4. Generate Linux PNG icon set from assets/icon.png
+          python3 -m pip install --quiet pillow
+          python3 -c "
+          from PIL import Image
+          import os
+          os.makedirs('build/icons', exist_ok=True)
+          img = Image.open('assets/icon.png')
+          for size in [16, 24, 32, 48, 64, 128, 256, 512]:
+              img.resize((size, size), Image.Resampling.LANCZOS).save(f'build/icons/{size}x{size}.png')
+          print('Generated PNG icon set in build/icons/')
+          "
+
+          echo "Patched electron-builder.config.cjs and packaging tools for Linux."
 
       - name: Install Dependencies
         if: steps.resolver.outputs.should_build == 'true'
