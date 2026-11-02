@@ -130,8 +130,19 @@ jobs:
 
       - name: Configure & Patch Linux Targets
         if: steps.resolver.outputs.should_build == 'true'
+        env:
+          TAG: ${{ steps.resolver.outputs.tag }}
         run: |
           cd upstream-source/apps/desktop
+
+          CLEAN_VERSION="${TAG#v}"
+          echo "Setting desktop version to ${CLEAN_VERSION}..."
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.version = '${CLEAN_VERSION}';
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2), 'utf8');
+          "
 
           # 1. Patch electron-builder.config.cjs for Linux targets
           node -e "
@@ -179,8 +190,8 @@ jobs:
         if: steps.resolver.outputs.should_build == 'true'
         run: |
           cd upstream-source
-          npm install --workspaces=false
-          npm install --workspace apps/desktop
+          npm install --workspaces=false --ignore-engines
+          npm install --workspace apps/desktop --ignore-engines
 
       - name: Build Hermes Desktop
         if: steps.resolver.outputs.should_build == 'true'
@@ -192,10 +203,11 @@ jobs:
           NODE_OPTIONS: "--max-old-space-size=8192"
         run: |
           cd upstream-source/apps/desktop
-          echo "Running build..."
+          CLEAN_VERSION="${TAG#v}"
+          echo "Running build for ${CLEAN_VERSION}..."
           npm run build
-          echo "Running builder for Linux..."
-          npm run builder -- --linux AppImage deb rpm
+          echo "Running builder for Linux with version ${CLEAN_VERSION}..."
+          npm run builder -- --linux AppImage deb rpm -c.extraMetadata.version=${CLEAN_VERSION}
 
       - name: Collect & Verify Artifacts
         if: steps.resolver.outputs.should_build == 'true'
