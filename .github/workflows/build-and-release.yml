@@ -188,7 +188,16 @@ jobs:
           print('Generated PNG icon set in build/icons/')
           "
 
-          echo "Patched electron-builder.config.cjs and packaging tools for Linux."
+          # 5. Patch write-build-stamp.mjs to use UPSTREAM_COMMIT over runner GITHUB_SHA
+          node -e "
+            const fs = require('fs');
+            const file = 'scripts/write-build-stamp.mjs';
+            let content = fs.readFileSync(file, 'utf8');
+            content = content.replace('const sha = env.GITHUB_SHA', 'const sha = env.UPSTREAM_COMMIT || env.GITHUB_SHA');
+            fs.writeFileSync(file, content, 'utf8');
+          "
+
+          echo "Patched electron-builder.config.cjs, packaging tools, and build stamp for Linux."
 
       - name: Install Dependencies
         if: steps.resolver.outputs.should_build == 'true'
@@ -203,6 +212,7 @@ jobs:
       - name: Build Hermes Desktop
         if: steps.resolver.outputs.should_build == 'true'
         env:
+          UPSTREAM_COMMIT: ${{ steps.clone.outputs.upstream_commit }}
           GITHUB_SHA: ${{ steps.clone.outputs.upstream_commit }}
           GITHUB_REF_NAME: ${{ steps.resolver.outputs.tag }}
           TAG: ${{ steps.resolver.outputs.tag }}
@@ -211,8 +221,10 @@ jobs:
         run: |
           cd upstream-source/apps/desktop
           CLEAN_VERSION="${TAG#v}"
-          echo "Running build for ${CLEAN_VERSION}..."
+          echo "Running build for ${CLEAN_VERSION} with upstream commit ${UPSTREAM_COMMIT}..."
           npm run build
+          echo "Verifying generated install-stamp.json:"
+          cat build/install-stamp.json
           echo "Running builder for Linux with version ${CLEAN_VERSION}..."
           npm run builder -- --linux AppImage deb rpm -c.extraMetadata.version=${CLEAN_VERSION}
 
