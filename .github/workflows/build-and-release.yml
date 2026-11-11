@@ -104,15 +104,17 @@ jobs:
             echo "title=${RELEASE_TITLE}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Setup Node.js 22.x
+      - name: Setup Node.js 22.x & Package Managers
         if: steps.resolver.outputs.should_build == 'true'
         uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a  # v4.2.0
         with:
           node-version: 22
 
-      - name: Update npm to latest
+      - name: Install pnpm & Update npm
         if: steps.resolver.outputs.should_build == 'true'
-        run: npm install -g npm@latest
+        run: |
+          npm install -g npm@latest
+          npm install -g pnpm@12.15.0
 
       - name: Setup Python 3.11
         if: steps.resolver.outputs.should_build == 'true'
@@ -203,11 +205,17 @@ jobs:
         if: steps.resolver.outputs.should_build == 'true'
         run: |
           cd upstream-source
-          if [ -f .npmrc ]; then
-            sed -i 's/engine-strict=true/engine-strict=false/g' .npmrc
+          if [ -f pnpm-lock.yaml ]; then
+            echo "Detected pnpm-lock.yaml. Installing dependencies with pnpm..."
+            pnpm install --frozen-lockfile || pnpm install
+          else
+            echo "No pnpm-lock.yaml found. Falling back to npm..."
+            if [ -f .npmrc ]; then
+              sed -i 's/engine-strict=true/engine-strict=false/g' .npmrc
+            fi
+            npm install --workspaces=false
+            npm install --workspace apps/desktop
           fi
-          npm install --workspaces=false
-          npm install --workspace apps/desktop
 
       - name: Build Hermes Desktop
         if: steps.resolver.outputs.should_build == 'true'
@@ -222,11 +230,19 @@ jobs:
           cd upstream-source/apps/desktop
           CLEAN_VERSION="${TAG#v}"
           echo "Running build for ${CLEAN_VERSION} with upstream commit ${UPSTREAM_COMMIT}..."
-          npm run build
-          echo "Verifying generated install-stamp.json:"
-          cat build/install-stamp.json
-          echo "Running builder for Linux with version ${CLEAN_VERSION}..."
-          npm run builder -- --linux AppImage deb rpm -c.extraMetadata.version=${CLEAN_VERSION}
+          if [ -f ../../pnpm-lock.yaml ]; then
+            pnpm run build
+            echo "Verifying generated install-stamp.json:"
+            cat build/install-stamp.json
+            echo "Running builder for Linux with version ${CLEAN_VERSION}..."
+            pnpm run builder --linux AppImage deb rpm -c.extraMetadata.version=${CLEAN_VERSION}
+          else
+            npm run build
+            echo "Verifying generated install-stamp.json:"
+            cat build/install-stamp.json
+            echo "Running builder for Linux with version ${CLEAN_VERSION}..."
+            npm run builder -- --linux AppImage deb rpm -c.extraMetadata.version=${CLEAN_VERSION}
+          fi
 
       - name: Collect & Verify Artifacts
         if: steps.resolver.outputs.should_build == 'true'
