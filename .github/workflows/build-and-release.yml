@@ -1,9 +1,6 @@
 name: Sync and Build Hermes Desktop for Linux
 
 on:
-  schedule:
-    # Runs every 6 hours to check for new upstream releases
-    - cron: '0 */6 * * *'
   workflow_dispatch:
     inputs:
       tag:
